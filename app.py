@@ -3,176 +3,192 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 import requests
+from datetime import datetime
 
-# Configuración de la página web
-st.set_page_config(page_title="Auditoría RRHH & Modelo BCG Chile", page_icon="📊", layout="wide")
+# Configuración de la página web adaptada a dispositivos móviles
+st.set_page_config(page_title="Análisis Económico Avanzado (BCG)", page_icon="🇨🇱", layout="centered")
 
 # --- FUNCIÓN PARA OBTENER LA UF EN TIEMPO REAL ---
-@st.cache_data(ttl=3600)  # Guarda el valor por 1 hora para que cargue rápido
+@st.cache_data(ttl=3600)
 def obtener_uf_actual():
     try:
-        # Consultamos la API pública de mindicador.cl
         url = "https://mindicador.cl/api/uf"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             datos = response.json()
             valor_uf = datos['serie'][0]['valor']
-            fecha_uf = datos['serie'][0]['fecha'][:10]
-            # Formatear fecha a DD-MM-AAAA
-            fecha_f = "-".join(fecha_uf.split("-")[::-1])
-            return float(valor_uf), fecha_f
+            return float(valor_uf)
     except Exception:
         pass
-    return 38000.0, "Valor estimado (Error de conexión)" # Valor de respaldo si la API falla
+    return 40746.28  # Usamos el valor exacto que aparece en tu captura de pantalla como respaldo
 
-# Cargar la UF al iniciar la app
-valor_uf, fecha_uf = obtener_uf_actual()
+# Cargar la UF inicial
+if 'valor_uf' not in st.session_state:
+    st.session_state['valor_uf'] = obtener_uf_actual()
 
-st.title("📊 Sistema Avanzado de Analítica de Selección (Modelo BCG - Chile)")
-st.markdown(f"**Indicador Económico del Día:** 1 UF = **${valor_uf:,.2f} CLP** *(Actualizado al: {fecha_uf})*")
+# Inicialización de variables globales de validez
+if 'r1_auto' not in st.session_state:
+    st.session_state['r1_auto'] = 0.40  # Valor por defecto de tu captura
+if 'r2_auto' not in st.session_state:
+    st.session_state['r2_auto'] = 0.80  # Valor por defecto de tu captura
+
+# --- DISEÑO VISUAL DE LA INTERFAZ ---
+st.title("ANÁLISIS ECONÓMICO AVANZADO (BCG)")
+
+# ==========================================
+# SECCIÓN: MÓDULO DE AUDITORÍA (EXCEL INTEGRADO)
+# ==========================================
+st.markdown("### 🎯 AUDITORÍA DE PLANILLAS EXCEL")
+st.write("Cargue sus archivos para calcular de forma automatizada las valideces ($r_1$ y $r_2$). Si el Excel tiene texto introductorio, el sistema buscará los encabezados correctos de forma inteligente.")
+
+col_up1, col_up2 = st.columns(2)
+
+def procesar_excel_inteligente(uploaded_file):
+    """Busca dinámicamente los encabezados correctos para evitar el error de la captura 1"""
+    if uploaded_file is None:
+        return None
+    try:
+        # Intentar leer desde el inicio primero
+        for i in range(15):  # Probamos desde la fila 1 hasta la 15 como margen
+            df = pd.read_excel(uploaded_file, header=i)
+            df.columns = df.columns.str.strip()
+            columnas_buscadas = ['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica', 'Desempeno_Real']
+            if all(col in df.columns for col in columnas_buscadas):
+                df = df.dropna(subset=columnas_buscadas)
+                X = df[['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica']]
+                y = df['Desempeno_Real']
+                modelo = LinearRegression()
+                modelo.fit(X, y)
+                return np.sqrt(modelo.score(X, y))
+    except Exception:
+        pass
+    return "Error_Columnas"
+
+with col_up1:
+    file_act = st.file_uploader("Planilla Proceso Actual", type=["xlsx"], key="u_act")
+    if file_act:
+        res_r1 = procesar_excel_inteligente(file_act)
+        if res_r1 == "Error_Columnas":
+            st.error("❌ Error: No se encontraron las columnas requeridas.")
+        elif res_r1 is not None:
+            st.session_state['r1_auto'] = float(res_r1)
+            st.success(f"Validez calculada r1: {res_r1:.2f}")
+
+with col_up2:
+    file_nov = st.file_uploader("Planilla Proceso Nuevo", type=["xlsx"], key="u_nov")
+    if file_nov:
+        res_r2 = procesar_excel_inteligente(file_nov)
+        if res_r2 == "Error_Columnas":
+            st.error("❌ Error: No se encontraron las columnas requeridas.")
+        elif res_r2 is not None:
+            st.session_state['r2_auto'] = float(res_r2)
+            st.success(f"Validez calculada r2: {res_r2:.2f}")
+
 st.markdown("---")
 
-# Crear las dos pestañas principales del sistema web
-tab1, tab2 = st.tabs(["🎯 1. Auditoría de Validez (Subir 2 Excels)", "🇨🇱 2. Simulación Financiera BCG (en CLP y UF)"])
+# ==========================================
+# SECCIÓN: DATOS DEL CARGO (REGLA 40%)
+# ==========================================
+st.subheader("DATOS DEL CARGO (REGLA 40%)")
+nombre_cargo = st.text_input("Nombre del Cargo:", value="Analista TI")
+sueldo_mensual = st.number_input("Sueldo Mensual ($):", value=1500000, step=50000)
+
+# Regla del 40% automatizada para el cálculo de SDy
+sueldo_anual = sueldo_mensual * 12
+SD_y = sueldo_anual * 0.40
+st.markdown(f"<span style='color:green;'>SDy (Variabilidad Anual): ${SD_y:,.2f} CLP</span>", unsafe_allow_html=True)
 
 # ==========================================
-# PESTAÑA 1: AUDITORÍA DE VALIDEZ COMPARATIVA
+# SECCIÓN: VARIABLES GENERALES
 # ==========================================
-with tab1:
-    st.header("Análisis Estadístico: Proceso Actual vs. Proceso Nuevo")
-    st.write("Cargue los datos históricos de ambos procesos para calcular sus niveles de validez reales.")
-    
-    col_file1, col_file2 = st.columns(2)
-    
-    if 'r1_calculado' not in st.session_state:
-        st.session_state['r1_calculado'] = 0.20  
-    if 'r2_calculado' not in st.session_state:
-        st.session_state['r2_calculado'] = 0.49  
-
-    with col_file1:
-        st.subheader("📉 Planilla A: Proceso Histórico / Actual")
-        uploaded_actual = st.file_uploader("Subir Excel Proceso Actual (.xlsx)", type=["xlsx"], key="actual_file")
-        if uploaded_actual is not None:
-            try:
-                try:
-                    df_act = pd.read_excel(uploaded_actual, header=8)
-                    df_act.columns = df_act.columns.str.strip()
-                    columnas_necesarias = ['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica', 'Desempeno_Real']
-                    if not all(col in df_act.columns for col in columnas_necesarias): raise KeyError()
-                except Exception:
-                    df_act = pd.read_excel(uploaded_actual, header=0)
-                    df_act.columns = df_act.columns.str.strip()
-                
-                df_act = df_act.dropna(subset=['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica', 'Desempeno_Real'])
-                if len(df_act) >= 3:
-                    X_act = df_act[['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica']]
-                    y_act = df_act['Desempeno_Real']
-                    modelo_act = LinearRegression()
-                    modelo_act.fit(X_act, y_act)
-                    r1 = np.sqrt(modelo_act.score(X_act, y_act))
-                    st.session_state['r1_calculado'] = float(r1)
-                    st.metric(label="VALIDEZ REAL PROCESO ACTUAL (r1)", value=f"{r1:.2f}")
-                    st.success(f"✔️ {len(df_act)} casos procesados con éxito.")
-                else: st.error("Se necesitan al menos 3 filas de datos válidas.")
-            except Exception: st.error("Error al procesar el archivo. Revise los encabezados.")
-
-    with col_file2:
-        st.subheader("🚀 Planilla B: Proceso Científico / Nuevo")
-        uploaded_nuevo = st.file_uploader("Subir Excel Proceso Nuevo (.xlsx)", type=["xlsx"], key="nuevo_file")
-        if uploaded_nuevo is not None:
-            try:
-                try:
-                    df_nov = pd.read_excel(uploaded_nuevo, header=8)
-                    df_nov.columns = df_nov.columns.str.strip()
-                    columnas_necesarias = ['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica', 'Desempeno_Real']
-                    if not all(col in df_nov.columns for col in columnas_necesarias): raise KeyError()
-                except Exception:
-                    df_nov = pd.read_excel(uploaded_nuevo, header=0)
-                    df_nov.columns = df_nov.columns.str.strip()
-                
-                df_nov = df_nov.dropna(subset=['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica', 'Desempeno_Real'])
-                if len(df_nov) >= 3:
-                    X_nov = df_nov[['Test_Inteligencia', 'Test_Personalidad', 'Prueba_Tecnica']]
-                    y_nov = df_nov['Desempeno_Real']
-                    modelo_nov = LinearRegression()
-                    modelo_nov.fit(X_nov, y_nov)
-                    r2 = np.sqrt(modelo_nov.score(X_nov, y_nov))
-                    st.session_state['r2_calculado'] = float(r2)
-                    st.metric(label="VALIDEZ REAL PROCESO NUEVO (r2)", value=f"{r2:.2f}")
-                    st.success(f"✔️ {len(df_nov)} casos procesados con éxito.")
-                else: st.error("Se necesitan al menos 3 filas de datos válidas.")
-            except Exception: st.error("Error al procesar el archivo. Revise los encabezados.")
+st.subheader("VARIABLES GENERALES")
+col_var1, col_var2, col_var3 = st.columns(3)
+with col_var1:
+    N = st.number_input("N (Número contratados):", value=15, min_value=1)
+with col_var2:
+    T = st.number_input("T (Años de permanencia):", value=3, min_value=1)
+with col_var3:
+    k_porcentaje = st.number_input("k (Razón de Selección %):", value=10, min_value=1, max_value=100)
 
 # ==========================================
-# PESTAÑA 2: SIMULADOR FINANCIERO BCG CHILE
+# SECCIÓN: CONEXIÓN FINANCIERA ONLINE
 # ==========================================
-with tab2:
-    st.header("Simulador de Utilidad Económica en Pesos Chilenos (BCG)")
-    st.write("Determine el impacto financiero neto convirtiendo los costos de UF a CLP de forma automatizada.")
-    
-    r1_final = st.session_state['r1_calculado']
-    r2_final = st.session_state['r2_calculado']
-    
-    st.info(f"📋 **Valideces Vinculadas:** Proceso Actual (**r1 = {r1_final:.2f}**) | Proceso Nuevo (**r2 = {r2_final:.2f}**)")
+st.subheader("CONEXIÓN FINANCIERA ONLINE")
+fecha_hoy = datetime.today().strftime('%Y-%m-%d')
+st.text_input("Fecha UF (AAAA-MM-DD):", value=fecha_hoy, disabled=True)
 
-    col_input1, col_input2 = st.columns(2)
-    
-    with col_input1:
-        st.subheader("📊 Estructura del Cargo y Filtros")
-        N = st.number_input("Número de contratados al año (N)", value=10, min_value=1)
-        T = st.number_input("Permanencia promedio en el puesto en años (T)", value=2.0, min_value=0.1)
-        
-        st.markdown("---")
-        st.markdown("**💰 Costos de Selección (en UF):**")
-        C_actual_uf = st.number_input("Costo de evaluación por postulante - Proceso Actual (UF)", value=1.5, step=0.1)
-        C_nuevo_uf = st.number_input("Costo de evaluación por postulante - Proceso Nuevo (UF)", value=3.0, step=0.1)
-        
-        # Conversión automática a pesos para mostrar información al usuario
-        c_act_clp = C_actual_uf * valor_uf
-        c_nov_clp = C_nuevo_uf * valor_uf
-        st.caption(f"➔ Equivalente en CLP: Proceso Actual: **${c_act_clp:,.0f}** | Proceso Nuevo: **${c_nov_clp:,.0f}** por postulante.")
-        
-    with col_input2:
-        st.subheader("📈 Productividad Laboral Chilena")
-        sueldo_mensual_clp = st.number_input("Sueldo BRUTO mensual promedio ($ CLP)", value=1500000, step=50000)
-        
-        # El modelo BCG requiere salario bruto ANUAL
-        salario_anual_clp = sueldo_mensual_clp * 12
-        
-        porcentaje_sd = st.slider("Desviación estándar del desempeño (SDy % del sueldo)", min_value=10, max_value=60, value=40)
-        SD_y_clp = salario_anual_clp * (porcentaje_sd / 100)
-        
-        st.caption(f"Sueldo Bruto Anualizado: ${salario_anual_clp:,.0f} CLP")
-        st.caption(f"Variabilidad de rendimiento anual (SDy): **${SD_y_clp:,.0f} CLP**")
+if st.button("Consultar Valor UF", type="secondary"):
+    st.session_state['valor_uf'] = obtener_uf_actual()
+    st.toast("¡Valor de UF actualizado desde el servidor público!")
 
-    st.markdown("#### 🎯 Selectividad del Embudo")
-    tasa_seleccion = st.slider("Tasa de Selección (% de postulantes aceptados del total evaluado)", min_value=1, max_value=100, value=20)
-    
-    SR = tasa_seleccion / 100.0
+valor_uf_input = st.number_input("Valor de la UF ($):", value=st.session_state['valor_uf'], step=0.01)
+
+# ==========================================
+# SECCIÓN: PROCESO ACTUAL (1) vs NUEVO (2)
+# ==========================================
+st.subheader("PROCESO ACTUAL (1)")
+col_act1, col_act2, col_act3 = st.columns(3)
+with col_act1:
+    r1 = st.number_input("r1 (Validez del test actual):", value=st.session_state['r1_auto'], min_value=0.0, max_value=1.0, step=0.01)
+with col_act2:
+    # Cálculo estadístico preciso de la ordenada normal basándose en la Razón de Selección (SR)
+    SR = k_porcentaje / 100.0
     from scipy.stats import norm
     phi_lambda = norm.pdf(norm.ppf(1 - SR)) if SR < 1.0 else 0.0
-    Z_score_factor = phi_lambda / SR if SR > 0 else 0.0
+    Z1_calc = phi_lambda / SR if SR > 0 else 0.0
+    Z1 = st.number_input("Z1 (Media predictor normalizado):", value=float(Z1_calc), step=0.01, help="Calculado automáticamente según la razón de selección k")
+with col_act3:
+    C1 = st.number_input("C1 (Costo por candidato en UF - Actual):", value=3.0, step=0.1)
 
-    # --- EJECUCIÓN DEL MODELO EN PESOS ---
-    if st.button("💰 Calcular Impacto Económico en CLP", type="primary"):
-        # Costos totales convertidos a pesos en la fórmula
-        utilidad_actual_clp = (N * T * r1_final * SD_y_clp * Z_score_factor) - (N * (1/SR) * (C_actual_uf * valor_uf))
-        utilidad_nueva_clp  = (N * T * r2_final * SD_y_clp * Z_score_factor) - (N * (1/SR) * (C_nuevo_uf * valor_uf))
-        incremento_neto_clp = utilidad_nueva_clp - utilidad_actual_clp
-        incremento_neto_uf = incremento_neto_clp / valor_uf
+st.subheader("NUEVO PROCESO PROPUESTO (2)")
+col_nov1, col_nov2, col_nov3 = st.columns(3)
+with col_nov1:
+    r2 = st.number_input("r2 (Validez del nuevo test):", value=st.session_state['r2_auto'], min_value=0.0, max_value=1.0, step=0.01)
+with col_nov2:
+    Z2 = st.number_input("Z2 (Media predictor normalizado - Nuevo):", value=float(Z1_calc), step=0.01, help="Suele ser idéntico a Z1 al mantener la misma razón de selección k")
+with col_nov3:
+    C2 = st.number_input("C2 (Costo por candidato en UF - Nuevo):", value=6.0, step=0.1)
+
+# Inicializar estados de utilidad en la sesión para despliegue posterior
+if 'u_actual_res' not in st.session_state: st.session_state['u_actual_res'] = 0.0
+if 'u_nuevo_res' not in st.session_state: st.session_state['u_nuevo_res'] = 0.0
+
+st.markdown("---")
+
+# ==========================================
+# SECCIÓN: ACCIONES Y RESULTADOS FINALES
+# ==========================================
+col_btn1, col_btn2 = st.columns(2)
+
+with col_btn1:
+    if st.button("Calcular Utilidad", type="primary"):
+        # Ecuación Financiera Completa del Modelo BCG (Brogden-Cronbach-Gleser)
+        # Multiplicamos el costo en UF por el valor de la UF y por la cantidad total de evaluados (N * (1/SR))
+        total_evaluados = N * (1 / SR)
         
-        st.markdown("---")
-        st.subheader("🇨🇱 Informe Ejecutivo de Retorno de Inversión (CLP / UF)")
+        utilidad_actual = (N * T * r1 * SD_y * Z1) - (total_evaluados * (C1 * valor_uf_input))
+        utilidad_nueva  = (N * T * r2 * SD_y * Z2) - (total_evaluados * (C2 * valor_uf_input))
         
-        c_res1, c_res2, c_res3 = st.columns(3)
-        c_res1.metric(label="Rendimiento (Proceso Actual)", value=f"${utilidad_actual_clp:,.0f} CLP")
-        c_res2.metric(label="Rendimiento (Proceso Nuevo)", value=f"${utilidad_nueva_clp:,.0f} CLP")
+        st.session_state['u_actual_res'] = utilidad_actual
+        st.session_state['u_nuevo_res'] = utilidad_nueva
         
-        if incremento_neto_clp > 0:
-            c_res3.metric(label="INCREMENTO NETO PATRIMONIAL", value=f"${incremento_neto_clp:,.0f} CLP", delta=f"${incremento_neto_clp:,.0f} CLP")
+        if utilidad_nueva > utilidad_actual:
             st.balloons()
-            st.success(f"🚀 **Conclusión Estratégica:** Reemplazar el método tradicional por la nueva batería de test generará un beneficio económico incremental de **${incremento_neto_clp:,.0f} CLP** (equivalente a **{incremento_neto_uf:.1f} UF**) durante el ciclo laboral de los trabajadores contratados. El retorno justifica plenamente la inversión.")
-        else:
-            c_res3.metric(label="DIFERENCIA NETA", value=f"${incremento_neto_clp:,.0f} CLP", delta=f"${incremento_neto_clp:,.0f} CLP", delta_color="inverse")
-            st.error("⚠️ **Conclusión Estratégica:** Los costos en UF de la nueva batería o la diferencia de validez no justifican financieramente modificar el proceso histórico.")
-            
+
+with col_btn2:
+    if st.button("Limpiar Datos"):
+        st.session_state['r1_auto'] = 0.40
+        st.session_state['r2_auto'] = 0.80
+        st.session_state['u_actual_res'] = 0.0
+        st.session_state['u_nuevo_res'] = 0.0
+        st.rerun()
+
+# Despliegue de los resultados numéricos idéntico a la parte baja de la imagen 2
+st.markdown(f"### **Utilidad Proceso Actual:** `${st.session_state['u_actual_res']:,.0f} CLP`")
+st.markdown(f"### **Utilidad Nuevo Proceso:** `${st.session_state['u_nuevo_res']:,.0f} CLP`")
+
+# Mostrar el beneficio neto incremental
+diferencia = st.session_state['u_nuevo_res'] - st.session_state['u_actual_res']
+if diferencia > 0:
+    st.success(f"🚀 **Incremento Neto Patrimonial (Ahorro):** `${diferencia:,.0f} CLP` (Equivalente a `{diferencia/valor_uf_input:,.1f} UF`)")
+    
